@@ -495,7 +495,7 @@ async function abrirFormulario(j, d) {
 //  ADMINISTRACIÓN (solo ADMIN)
 // =====================================================================
 const SUBS = [['actas', 'Revisión de actas'], ['usuarios', 'Usuarios'], ['organizaciones', 'Organizaciones políticas'],
-  ['candidaturas', 'Candidaturas'], ['parroquias', 'Parroquias'], ['electores', 'Electores por junta']];
+  ['candidaturas', 'Candidaturas'], ['parroquias', 'Parroquias'], ['electores', 'Electores por junta'], ['reportes', 'Reportes Excel']];
 
 function vistaAdmin() {
   $('#vista').innerHTML = `<section class="panel"><div class="subnav">${SUBS.map(([k, t]) => `<button data-sub="${k}">${t}</button>`).join('')}</div><div id="a-cont"></div></section>`;
@@ -505,7 +505,12 @@ function vistaAdmin() {
 function pintarAdmin() {
   $$('.subnav button').forEach((b) => b.classList.toggle('activa', b.dataset.sub === S.a.sub));
   ({ actas: adminActas, usuarios: adminUsuarios, organizaciones: adminOrganizaciones, candidaturas: adminCandidaturas,
-    parroquias: adminParroquias, electores: adminElectores })[S.a.sub]();
+    parroquias: adminParroquias, electores: adminElectores, reportes: adminReportes })[S.a.sub]();
+}
+// Botón "Descargar Excel" para las vistas de administración
+const btnExcel = (tipo) => `<button class="btn peq" data-excel="${tipo}">⬇ Descargar Excel</button>`;
+function enlazarExcel(cont) {
+  $$('[data-excel]', cont).forEach((b) => (b.onclick = () => reporteExcel(b.dataset.excel, b)));
 }
 
 // ---------- Revisión de actas ----------
@@ -595,7 +600,8 @@ async function adminOrganizaciones() {
       <label style="flex:1;min-width:200px">Nombre de la organización <input type="text" name="nombre" required></label>
       <label>Color <input type="color" name="color" value="#1d4ed8"></label>
       <button class="btn primario">Agregar</button>
-    </form><div class="tabla-cont" id="ao-t"></div>`;
+    </form><div class="acciones" style="margin:0 0 .5rem">${btnExcel('organizaciones')}</div><div class="tabla-cont" id="ao-t"></div>`;
+  enlazarExcel(c);
   $('#ao-f').onsubmit = async (e) => {
     e.preventDefault();
     const f = Object.fromEntries(new FormData(e.target));
@@ -637,7 +643,9 @@ async function adminCandidaturas() {
       <label>Orden <input type="number" name="orden" value="0" style="width:5rem"></label>
       <button class="btn primario">Agregar</button>
     </form>
+    <div class="acciones" style="margin:0 0 .5rem">${btnExcel('candidaturas')}</div>
     <div class="tabla-cont" id="ac-t"><div class="vacio">Cargando…</div></div>`;
+  enlazarExcel(c);
   $$('#a-cont .chips .chip').forEach((b) => (b.onclick = () => { S.a.candDignidad = Number(b.dataset.id); adminCandidaturas(); }));
   $('#ac-f').onsubmit = async (e) => {
     e.preventDefault();
@@ -669,15 +677,134 @@ async function adminCandidaturas() {
   }));
 }
 
+// ---------- Reportes Excel ----------
+const REPORTES = [
+  ['organizaciones', 'Organizaciones políticas', 'Listas, siglas, tipo (partido o alianza) y cuántas candidaturas tiene cada una por dignidad.'],
+  ['candidaturas', 'Candidaturas', 'Todas las candidaturas de todas las dignidades con su circunscripción, lista, orden en la papeleta y si están activas.'],
+  ['parroquias', 'Parroquias', 'Parroquias con zonas, recintos, juntas, electores y listas de vocales registradas; marca las que tienen datos faltantes.'],
+  ['todo', 'Libro completo', 'Un solo archivo con las tres hojas anteriores más un resumen.'],
+];
+function adminReportes() {
+  const c = $('#a-cont');
+  c.innerHTML = `<p class="ayuda">Descargue los catálogos en Excel para revisarlos contra las papeletas y el distributivo del CNE. Los datos se leen de la base en el momento de la descarga.</p>
+    <div class="tabla-cont"><table><tbody>
+    ${REPORTES.map(([k, t, d]) => `<tr><td><b>${esc(t)}</b><br><small>${esc(d)}</small></td><td style="text-align:right">${btnExcel(k)}</td></tr>`).join('')}
+    </tbody></table></div>`;
+  enlazarExcel(c);
+}
+
+let _xlsx = null;
+async function libXLSX() {
+  // SheetJS solo se descarga la primera vez que se pide un reporte (únicamente escribe archivos, no lee)
+  _xlsx ??= await import('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/xlsx.mjs');
+  return _xlsx;
+}
+const AMBITO_ORDEN = (d) => d?.orden ?? 99;
+
+async function datosReporte() {
+  const cands = await q(sb.from('candidatura').select('*').limit(10000));
+  const nomC = (id) => S.cantones.find((x) => x.id === id)?.nombre || '';
+  const nomP = (id) => S.parroquias.find((x) => x.id === id)?.nombre || '';
+  const org = (id) => S.organizaciones.find((o) => o.id === id) || {};
+  const dig = (id) => S.dignidades.find((d) => d.id === id);
+  cands.sort((a, b) => AMBITO_ORDEN(dig(a.dignidad_id)) - AMBITO_ORDEN(dig(b.dignidad_id))
+    || nomC(a.canton_id).localeCompare(nomC(b.canton_id)) || nomP(a.parroquia_id).localeCompare(nomP(b.parroquia_id))
+    || a.orden - b.orden || a.id - b.id);
+  return { cands, nomC, nomP, org, dig };
+}
+
+function hojaOrganizaciones({ cands, dig }) {
+  const digs = S.dignidades;
+  const filas = [['Lista', 'Sigla', 'Nombre', 'Tipo', 'Color', ...digs.map((d) => d.nombre), 'Total candidaturas', 'Observación']];
+  const orgs = [...S.organizaciones].sort((a, b) => String(a.lista || '').localeCompare(String(b.lista || ''), 'es', { numeric: true }));
+  for (const o of orgs) {
+    const suyas = cands.filter((c) => c.organizacion_id === o.id);
+    filas.push([o.lista || '', o.sigla || '', o.nombre, String(o.lista || '').includes('-') ? 'Alianza' : 'Partido / movimiento', o.color,
+      ...digs.map((d) => suyas.filter((c) => c.dignidad_id === d.id).length), suyas.length,
+      suyas.length ? '' : 'Sin candidaturas']);
+  }
+  const sinOrg = cands.filter((c) => !c.organizacion_id).length;
+  if (sinOrg) filas.push([], ['', '', `Candidaturas sin organización: ${sinOrg}`]);
+  return { nombre: 'Organizaciones', filas, anchos: [9, 20, 50, 20, 10, ...digs.map(() => 14), 12, 20] };
+}
+
+function hojaCandidaturas({ cands, nomC, nomP, org, dig }) {
+  const filas = [['Dignidad', 'Ámbito', 'Cantón', 'Parroquia', 'Orden', 'Lista', 'Sigla', 'Organización', 'Candidatura', 'Activa', 'ID']];
+  for (const c of cands) {
+    const d = dig(c.dignidad_id) || {}, o = org(c.organizacion_id);
+    filas.push([d.nombre || '', AMBITO_TXT[d.ambito] || '', c.canton_id ? nomC(c.canton_id) : 'PROVINCIA', nomP(c.parroquia_id),
+      c.orden, o.lista || '', o.sigla || '', o.nombre || '(sin organización)', c.nombre, c.activa ? 'Sí' : 'No', c.id]);
+  }
+  return { nombre: 'Candidaturas', filas, anchos: [30, 20, 13, 18, 7, 9, 18, 45, 70, 7, 7] };
+}
+
+function hojaParroquias({ cands }) {
+  const vocal = S.dignidades.find((d) => d.ambito === 'PARROQUIAL_RURAL');
+  const filas = [['Cantón', 'Código', 'Parroquia', 'Tipo', 'Zonas', 'Recintos', 'Juntas', 'Electores', 'Juntas con electores referenciales', 'Listas de vocales', 'Observación']];
+  const lista = [...S.parroquias].sort((a, b) => a.canton_id - b.canton_id || a.nombre.localeCompare(b.nombre));
+  for (const p of lista) {
+    const js = S.juntas.filter((j) => j.parroquia_id === p.id);
+    const listas = vocal ? cands.filter((c) => c.dignidad_id === vocal.id && c.parroquia_id === p.id && c.activa).length : 0;
+    const obs = [];
+    if (!js.length) obs.push('Sin juntas');
+    if (p.tipo === 'RURAL' && !listas) obs.push('Sin listas de vocales');
+    filas.push([S.cantones.find((x) => x.id === p.canton_id)?.nombre || '', p.id, p.nombre, p.tipo === 'URBANA' ? 'Urbana' : 'Rural',
+      new Set(js.map((j) => j.zona_id)).size, new Set(js.map((j) => j.recinto_id)).size, js.length,
+      js.reduce((s, j) => s + (j.electores || 0), 0), js.filter((j) => j.electores_referencial).length,
+      p.tipo === 'RURAL' ? listas : '–', obs.join('; ')]);
+  }
+  // Fila de totales con fórmula (y su valor, que SheetJS necesita para escribir la celda)
+  const n = filas.length;
+  const total = (i, col) => ({ t: 'n', f: `SUM(${col}2:${col}${n})`,
+    v: filas.slice(1).reduce((s, f) => s + (typeof f[i] === 'number' ? f[i] : 0), 0) });
+  filas.push(['TOTAL', '', '', '', total(4, 'E'), total(5, 'F'), total(6, 'G'), total(7, 'H'), total(8, 'I'), total(9, 'J'), '']);
+  return { nombre: 'Parroquias', filas, anchos: [14, 8, 20, 8, 7, 9, 8, 10, 14, 10, 30] };
+}
+
+function hojaResumen({ cands }) {
+  const filas = [['Reporte de catálogos — Elecciones Seccionales y CPCCS 2027, Pastaza'],
+    [`Generado: ${new Date().toLocaleString('es-EC')} por ${S.perfil?.email || ''}`], [],
+    ['Dignidad', 'Ámbito', 'Candidaturas activas', 'Candidaturas inactivas']];
+  for (const d of S.dignidades) {
+    const suyas = cands.filter((c) => c.dignidad_id === d.id);
+    filas.push([d.nombre, AMBITO_TXT[d.ambito] || '', suyas.filter((c) => c.activa).length, suyas.filter((c) => !c.activa).length]);
+  }
+  filas.push([], ['Organizaciones', S.organizaciones.length], ['Cantones', S.cantones.length], ['Parroquias', S.parroquias.length], ['Juntas', S.juntas.length]);
+  return { nombre: 'Resumen', filas, anchos: [45, 22, 20, 20] };
+}
+
+async function reporteExcel(tipo, boton) {
+  const txt = boton?.textContent;
+  if (boton) { boton.disabled = true; boton.textContent = 'Generando…'; }
+  try {
+    const [XLSX, datos] = await Promise.all([libXLSX(), datosReporte()]);
+    const hojas = { organizaciones: [hojaOrganizaciones], candidaturas: [hojaCandidaturas], parroquias: [hojaParroquias],
+      todo: [hojaResumen, hojaOrganizaciones, hojaCandidaturas, hojaParroquias] }[tipo].map((fn) => fn(datos));
+    const wb = XLSX.utils.book_new();
+    for (const h of hojas) {
+      const ws = XLSX.utils.aoa_to_sheet(h.filas);
+      ws['!cols'] = h.anchos.map((w) => ({ wch: w }));
+      if (h.nombre !== 'Resumen') ws['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: 0, c: h.filas[0].length - 1 } }) };
+      XLSX.utils.book_append_sheet(wb, ws, h.nombre);
+    }
+    const fecha = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+    XLSX.writeFile(wb, `${tipo === 'todo' ? 'catalogos' : tipo}_pastaza_2027_${fecha}.xlsx`);
+    toast('Reporte descargado.', 'ok');
+  } catch (e) { toast('No se pudo generar el reporte: ' + e.message, 'mal'); }
+  finally { if (boton) { boton.disabled = false; boton.textContent = txt; } }
+}
+
 // ---------- Parroquias ----------
 function adminParroquias() {
   const c = $('#a-cont');
   const lista = [...S.parroquias].sort((a, b) => a.canton_id - b.canton_id || a.nombre.localeCompare(b.nombre));
   c.innerHTML = `<p class="ayuda">El tipo define qué dignidades se votan: en parroquias <b>urbanas</b> se votan concejales urbanos; en <b>rurales</b>, concejales rurales y vocales de la junta parroquial. Verifique con la circunscripción oficial del CNE.</p>
+    <div class="acciones" style="margin:0 0 .5rem">${btnExcel('parroquias')}</div>
     <div class="tabla-cont"><table><thead><tr><th>Cantón</th><th>Código</th><th>Parroquia</th><th>Tipo</th></tr></thead><tbody>
     ${lista.map((p) => `<tr><td>${esc(S.cantones.find((x) => x.id === p.canton_id)?.nombre)}</td><td>${p.id}</td><td>${esc(p.nombre)}</td>
       <td><select data-p="${p.id}">${opciones([{ v: 'URBANA', t: 'Urbana' }, { v: 'RURAL', t: 'Rural' }], p.tipo)}</select></td></tr>`).join('')}
     </tbody></table></div>`;
+  enlazarExcel(c);
   $$('[data-p]', c).forEach((s) => (s.onchange = async () => {
     try {
       await q(sb.from('parroquia').update({ tipo: s.value }).eq('id', Number(s.dataset.p)));
