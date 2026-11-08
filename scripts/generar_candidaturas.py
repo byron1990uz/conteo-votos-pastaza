@@ -230,6 +230,11 @@ PAPELETAS = [
     ]),
 ]
 
+PARROQUIA_CANTON = {
+    475: 680, 735: 881, 1025: 680, 1260: 680, 1275: 680, 2100: 880, 2310: 685, 2450: 680, 3055: 680,
+    3180: 680, 3195: 680, 3785: 680, 3840: 685, 3985: 680, 4005: 680, 4205: 680, 4510: 680, 4766: 680,
+}
+
 AMBITO_CANTONAL = {'ALCALDE', 'CONCEJAL_URBANO', 'CONCEJAL_RURAL'}
 
 
@@ -242,67 +247,73 @@ def s(v):
 
 
 def main():
-    out = [
-        '-- Organizaciones y candidaturas — Elecciones Seccionales 2027, Pastaza',
-        '-- Generado por scripts/generar_candidaturas.py desde Papeletas_Pastaza_2027_A4_29_hojas.pdf',
-        '-- Idempotente: se puede ejecutar varias veces (actualiza nombres/orden, no duplica).',
-        '-- No incluye CPCCS (no está en el PDF).',
-        'begin;',
-        '',
-        '-- 1. Organizaciones (una por número de lista; las alianzas son una organización propia)',
-        'create temp table _org (lista text, sigla text, nombre text, color text) on commit drop;',
-        'insert into _org values',
-        ',\n'.join(f'  ({s(l)}, {s(sg)}, {s(n)}, {s(c)})' for l, (sg, n, c) in ORGS.items()) + ';',
-        'update public.organizacion o set sigla = t.sigla, nombre = t.nombre, color = t.color',
-        '  from _org t where o.lista = t.lista;',
-        'insert into public.organizacion (lista, sigla, nombre, color)',
-        '  select t.lista, t.sigla, t.nombre, t.color from _org t',
-        '  where not exists (select 1 from public.organizacion o where o.lista = t.lista);',
-        '',
-        '-- 2. Candidaturas',
-        'create temp table _cand (dignidad text, lista text, nombre text, canton_id integer, parroquia_id integer, orden integer) on commit drop;',
-        'insert into _cand values',
-    ]
+    # Sin tablas temporales: el SQL Editor de Supabase puede ejecutar cada sentencia por separado,
+    # así que cada paso es una sola sentencia con CTE (update + insert).
+    orgs = ',\n'.join(f'  ({s(l)}, {s(sg)}, {s(n)}, {s(c)})' for l, (sg, n, c) in ORGS.items())
     filas = []
     for dign, circ, items in PAPELETAS:
-        canton = CANTON[circ] if dign in AMBITO_CANTONAL else None
-        parroquia = PARROQUIA[circ] if dign == 'VOCAL_JPR' else None
+        if dign in AMBITO_CANTONAL:
+            canton, parroquia = CANTON[circ], None
+        elif dign == 'VOCAL_JPR':
+            parroquia = PARROQUIA[circ]
+            canton = PARROQUIA_CANTON[parroquia]  # el trigger también lo completa
+        else:
+            canton = parroquia = None
         for orden, (lista, nombre) in enumerate(items, 1):
             assert lista in ORGS, lista
             nombre = nombre or f'LISTA {lista} – {ORGS[lista][1]}'
             filas.append(f'  ({s(dign)}, {s(lista)}, {s(nombre)}, {s(canton)}, {s(parroquia)}, {orden})')
-    out.append(',\n'.join(filas) + ';')
-    out += [
-        '',
-        '-- Para vocales el trigger completa canton_id desde la parroquia',
-        "update _cand c set canton_id = p.canton_id from public.parroquia p where p.id = c.parroquia_id;",
-        '',
-        'update public.candidatura k set nombre = c.nombre, orden = c.orden, activa = true',
-        '  from _cand c',
-        '  join public.dignidad d on d.codigo = c.dignidad',
-        '  join public.organizacion o on o.lista = c.lista',
-        ' where k.dignidad_id = d.id and k.organizacion_id = o.id',
-        '   and k.canton_id is not distinct from c.canton_id',
-        '   and k.parroquia_id is not distinct from c.parroquia_id;',
-        '',
-        'insert into public.candidatura (dignidad_id, organizacion_id, nombre, canton_id, parroquia_id, orden)',
-        'select d.id, o.id, c.nombre, c.canton_id, c.parroquia_id, c.orden',
-        '  from _cand c',
-        '  join public.dignidad d on d.codigo = c.dignidad',
-        '  join public.organizacion o on o.lista = c.lista',
-        ' where not exists (select 1 from public.candidatura k',
-        '                    where k.dignidad_id = d.id and k.organizacion_id = o.id',
-        '                      and k.canton_id is not distinct from c.canton_id',
-        '                      and k.parroquia_id is not distinct from c.parroquia_id);',
-        '',
-        f'-- Esperado: {len(ORGS)} organizaciones y {len(filas)} candidaturas de este archivo',
-        'commit;',
-        '',
-        "select d.codigo, count(*) as candidaturas from public.candidatura k join public.dignidad d on d.id = k.dignidad_id group by d.codigo, d.orden order by d.orden;",
-        '',
-    ]
+    cands = ',\n'.join(filas)
+    sql = f"""-- Organizaciones y candidaturas — Elecciones Seccionales 2027, Pastaza
+-- Generado por scripts/generar_candidaturas.py desde Papeletas_Pastaza_2027_A4_29_hojas.pdf
+-- Idempotente: se puede ejecutar varias veces (actualiza nombres/orden, no duplica).
+-- No incluye CPCCS (no está en el PDF).
+
+-- 1. Organizaciones (una por número de lista; las alianzas son una organización propia)
+with t(lista, sigla, nombre, color) as (values
+{orgs}
+), upd as (
+  update public.organizacion o set sigla = t.sigla, nombre = t.nombre, color = t.color
+    from t where o.lista = t.lista
+  returning o.id
+)
+insert into public.organizacion (lista, sigla, nombre, color)
+select t.lista, t.sigla, t.nombre, t.color from t
+ where not exists (select 1 from public.organizacion o where o.lista = t.lista);
+
+-- 2. Candidaturas ({len(filas)})
+with c(dignidad, lista, nombre, canton_id, parroquia_id, orden) as (values
+{cands}
+), x as (
+  select d.id as dignidad_id, o.id as organizacion_id, c.nombre,
+         c.canton_id::integer as canton_id, c.parroquia_id::integer as parroquia_id, c.orden
+    from c
+    join public.dignidad d on d.codigo = c.dignidad
+    join public.organizacion o on o.lista = c.lista
+), upd as (
+  update public.candidatura k set nombre = x.nombre, orden = x.orden, activa = true
+    from x
+   where k.dignidad_id = x.dignidad_id and k.organizacion_id = x.organizacion_id
+     and k.canton_id is not distinct from x.canton_id
+     and k.parroquia_id is not distinct from x.parroquia_id
+  returning k.id
+)
+insert into public.candidatura (dignidad_id, organizacion_id, nombre, canton_id, parroquia_id, orden)
+select x.dignidad_id, x.organizacion_id, x.nombre, x.canton_id, x.parroquia_id, x.orden
+  from x
+ where not exists (select 1 from public.candidatura k
+                    where k.dignidad_id = x.dignidad_id and k.organizacion_id = x.organizacion_id
+                      and k.canton_id is not distinct from x.canton_id
+                      and k.parroquia_id is not distinct from x.parroquia_id);
+
+-- 3. Verificación. Esperado de este archivo: PREFECTO 6, ALCALDE 20, CONCEJAL_URBANO 22,
+--    CONCEJAL_RURAL 21, VOCAL_JPR 73 (más las que se hayan creado a mano).
+select d.codigo, count(*) as candidaturas
+  from public.candidatura k join public.dignidad d on d.id = k.dignidad_id
+ group by d.codigo, d.orden order by d.orden;
+"""
     dest = Path(__file__).resolve().parent.parent / 'sql' / '03_candidaturas_2027.sql'
-    dest.write_text('\n'.join(out), encoding='utf-8')
+    dest.write_text(sql, encoding='utf-8')
     print(f'{dest}: {len(ORGS)} organizaciones, {len(filas)} candidaturas')
 
 
