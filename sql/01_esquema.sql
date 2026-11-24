@@ -459,6 +459,10 @@ begin
     raise exception 'Solo un administrador puede validar actas';
   end if;
   select email into v_email from public.perfil where user_id = auth.uid();
+  -- Un acta con novedades (descuadre, sufragantes > electores) nunca se suma: hay que corregirla, no validarla
+  if p_validar and exists (select 1 from public.acta a where a.id = p_acta and cardinality(a.novedades) > 0) then
+    raise exception 'No se puede validar un acta inconsistente. Corrija los datos del acta para que cuadre.';
+  end if;
   if p_validar then
     update public.acta
        set estado = 'VALIDADA', validado_por = auth.uid(), validado_en = now(),

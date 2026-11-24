@@ -545,7 +545,8 @@ async function adminActas() {
         <td><small>${esc(a.digitado_por_email || '')}<br>${new Date(a.digitado_en).toLocaleString('es-EC')}</small></td>
         <td style="white-space:nowrap">
           <button class="btn peq" data-ver="${a.acta_id}" data-junta="${a.junta_id}" data-dign="${a.dignidad_id}">Ver / corregir</button>
-          ${a.estado === 'VALIDADA' ? `<button class="btn peq" data-reabrir="${a.acta_id}">Reabrir</button>` : `<button class="btn peq ok" data-validar="${a.acta_id}">Validar</button>`}
+          ${a.estado === 'VALIDADA' ? `<button class="btn peq" data-reabrir="${a.acta_id}">Reabrir</button>`
+            : a.estado === 'INCONSISTENTE' ? '' : `<button class="btn peq ok" data-validar="${a.acta_id}">Validar</button>`}
           <button class="btn peq peligro" data-eliminar="${a.acta_id}">Eliminar</button></td></tr>`).join('')}
       </tbody></table>`;
   } catch (e) { $('#aa-tabla').innerHTML = `<div class="alerta mal">${esc(e.message)}</div>`; return; }
