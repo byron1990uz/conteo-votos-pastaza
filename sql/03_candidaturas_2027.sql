@@ -35,7 +35,7 @@ insert into public.organizacion (lista, sigla, nombre, color)
 select t.lista, t.sigla, t.nombre, t.color from t
  where not exists (select 1 from public.organizacion o where o.lista = t.lista);
 
--- 2. Candidaturas (142)
+-- 2. Candidaturas (141)
 with c(dignidad, lista, nombre, canton_id, parroquia_id, orden) as (values
   ('PREFECTO', '1', 'SILVIA SANTI TOSCANO / DANNY GUERRERO', null, null, 1),
   ('PREFECTO', '3', 'ANTONIO KUBES / CAMILA QUISIRUMBAY', null, null, 2),
@@ -174,11 +174,10 @@ with c(dignidad, lista, nombre, canton_id, parroquia_id, orden) as (values
   ('VOCAL_JPR', '7', 'JUDITH VARGAS, MARCO LOPEZ, BRIGITTE VARGAS, JORDY CHALCO, ERIKA FLORES', 680, 3055, 1),
   ('VOCAL_JPR', '61', 'NORMA CHARCO, ANGEL LLERENA, ROSA ACAN, ANGEL TOSCANO, XIMENA VARGAS', 680, 3055, 2),
   ('VOCAL_JPR', '63-20', 'ENRIQUE VARGAS, MARIA ACAN, GUILLERMO ROSERO, KATTY TOSCANO, RICHARD ZABALA', 680, 3055, 3),
-  ('VOCAL_JPR', '7', 'LISTA 7 – MOVIMIENTO ACCIÓN DEMOCRÁTICA NACIONAL, ADN', 680, 4205, 1),
-  ('VOCAL_JPR', '61', 'LISTA 61 – MOVIMIENTO POLÍTICO UNIDOS POR PASTAZA', 680, 4205, 2),
-  ('VOCAL_JPR', '63-20', 'LISTA 63-20 – ALIANZA SOMOS SEMILLA, SEREMOS BOSQUE', 680, 4205, 3),
-  ('VOCAL_JPR', '18', 'LISTA 18 – MOVIMIENTO DE UNIDAD PLURINACIONAL PACHAKUTIK', 680, 4205, 4),
-  ('VOCAL_JPR', '7', 'LISTA 7 – MOVIMIENTO ACCIÓN DEMOCRÁTICA NACIONAL, ADN', 680, 3195, 1)
+  ('VOCAL_JPR', '7', 'IVAN CHAVEZ, SANDRA ORTIZ, FAUSTO PICO, LISBETH CRIOLLO, JOSE DAVID GOMEZ', 680, 4205, 1),
+  ('VOCAL_JPR', '61', 'KARINA RIOS, DARIO IZURIETA, MARIA LUNA, LUIS QUIHUIRI, PRICILA CHIMBO', 680, 4205, 2),
+  ('VOCAL_JPR', '63-20', 'FRANKLIN MARTINEZ, ROSA SANCHEZ, CARLOS LLERENA, CECILIA SOLORZANO, DORIAN ESCOBAR', 680, 4205, 3),
+  ('VOCAL_JPR', '7', 'ROSA SANTI, LUIS MAMALLACTA, DINA SANTI, DANIEL DAHUA, JENNIFER CHANGO', 680, 3195, 1)
 ), x as (
   select d.id as dignidad_id, o.id as organizacion_id, c.nombre,
          c.canton_id::integer as canton_id, c.parroquia_id::integer as parroquia_id, c.orden
@@ -201,8 +200,8 @@ select x.dignidad_id, x.organizacion_id, x.nombre, x.canton_id, x.parroquia_id, 
                       and k.canton_id is not distinct from x.canton_id
                       and k.parroquia_id is not distinct from x.parroquia_id);
 
--- 3. Verificación. Esperado de este archivo: PREFECTO 6, ALCALDE 20, CONCEJAL_URBANO 22,
---    CONCEJAL_RURAL 21, VOCAL_JPR 73 (más las que se hayan creado a mano).
+-- 3. Verificación. Esperado de este archivo: PREFECTO 6, ALCALDE 20, CONCEJAL_RURAL 21, CONCEJAL_URBANO 22, VOCAL_JPR 72
+--    (más las que se hayan creado a mano).
 select d.codigo, count(*) as candidaturas
   from public.candidatura k join public.dignidad d on d.id = k.dignidad_id
  group by d.codigo, d.orden order by d.orden;

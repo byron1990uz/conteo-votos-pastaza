@@ -74,7 +74,7 @@ def main():
             parroquia, canton = circ, CANTON_NOM[PARROQUIA_CANTON[PARROQUIA[circ]]]
         else:
             canton, parroquia = 'PROVINCIA', ''
-        fuente = f'PDF pág. {pag}' if pag else 'Indicado por el usuario (sin papeleta)'
+        fuente = f'PDF pág. {pag}' if pag else 'Cargado por el usuario en la base (sin papeleta)'
         for orden, (lista, nombre) in enumerate(items, 1):
             sigla, org, _ = ORGS[lista]
             if nombre is None:

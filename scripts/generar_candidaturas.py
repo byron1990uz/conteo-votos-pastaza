@@ -1,7 +1,7 @@
 """Genera sql/03_candidaturas_2027.sql con organizaciones y candidaturas de Pastaza 2027.
 
 Fuente: Papeletas_Pastaza_2027_A4_29_hojas.pdf (CNE), transcritas a mano porque el PDF es escaneado.
-Veracruz y Río Tigre (vocales) no están en el PDF: se cargan solo las listas, sin nombres de candidatos.
+Veracruz y Río Tigre (vocales) no están en el PDF: los nombres se tomaron de lo cargado en la base.
 
 Uso:  python scripts/generar_candidaturas.py
 """
@@ -221,12 +221,15 @@ PAPELETAS = [
         ('61', 'NORMA CHARCO, ANGEL LLERENA, ROSA ACAN, ANGEL TOSCANO, XIMENA VARGAS'),
         ('63-20', 'ENRIQUE VARGAS, MARIA ACAN, GUILLERMO ROSERO, KATTY TOSCANO, RICHARD ZABALA'),
     ]),
-    # Sin papeleta en el PDF: datos indicados por el usuario (solo listas, sin nombres)
+    # Sin papeleta en el PDF: cargados por el usuario en la base (25/11/2026) y copiados aquí.
+    # La lista 18 de Veracruz se retiró en la base; no se incluye para no volver a crearla.
     ('VOCAL_JPR', 'VERACRUZ', [
-        ('7', None), ('61', None), ('63-20', None), ('18', None),
+        ('7', 'IVAN CHAVEZ, SANDRA ORTIZ, FAUSTO PICO, LISBETH CRIOLLO, JOSE DAVID GOMEZ'),
+        ('61', 'KARINA RIOS, DARIO IZURIETA, MARIA LUNA, LUIS QUIHUIRI, PRICILA CHIMBO'),
+        ('63-20', 'FRANKLIN MARTINEZ, ROSA SANCHEZ, CARLOS LLERENA, CECILIA SOLORZANO, DORIAN ESCOBAR'),
     ]),
     ('VOCAL_JPR', 'RIO TIGRE', [
-        ('7', None),
+        ('7', 'ROSA SANTI, LUIS MAMALLACTA, DINA SANTI, DANIEL DAHUA, JENNIFER CHANGO'),
     ]),
 ]
 
@@ -264,6 +267,10 @@ def main():
             nombre = nombre or f'LISTA {lista} – {ORGS[lista][1]}'
             filas.append(f'  ({s(dign)}, {s(lista)}, {s(nombre)}, {s(canton)}, {s(parroquia)}, {orden})')
     cands = ',\n'.join(filas)
+    conteo = {}
+    for dign, _, items in PAPELETAS:
+        conteo[dign] = conteo.get(dign, 0) + len(items)
+    esperado = ', '.join(f'{d} {n}' for d, n in conteo.items())
     sql = f"""-- Organizaciones y candidaturas — Elecciones Seccionales 2027, Pastaza
 -- Generado por scripts/generar_candidaturas.py desde Papeletas_Pastaza_2027_A4_29_hojas.pdf
 -- Idempotente: se puede ejecutar varias veces (actualiza nombres/orden, no duplica).
@@ -306,8 +313,8 @@ select x.dignidad_id, x.organizacion_id, x.nombre, x.canton_id, x.parroquia_id, 
                       and k.canton_id is not distinct from x.canton_id
                       and k.parroquia_id is not distinct from x.parroquia_id);
 
--- 3. Verificación. Esperado de este archivo: PREFECTO 6, ALCALDE 20, CONCEJAL_URBANO 22,
---    CONCEJAL_RURAL 21, VOCAL_JPR 73 (más las que se hayan creado a mano).
+-- 3. Verificación. Esperado de este archivo: {esperado}
+--    (más las que se hayan creado a mano).
 select d.codigo, count(*) as candidaturas
   from public.candidatura k join public.dignidad d on d.id = k.dignidad_id
  group by d.codigo, d.orden order by d.orden;
